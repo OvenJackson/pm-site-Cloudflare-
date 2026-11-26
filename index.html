@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>产品项目管理 · 2026—2027</title>
+<meta name="description" content="产品开发项目管理工作台：年度规划 MAP、项目工作池、重点项目、外协引进、配色管理与 WBS 进度。">
+<meta name="color-scheme" content="light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23B1491E'/%3E%3Ctext x='16' y='22' font-family='Arial' font-size='13' font-weight='bold' fill='%23FFF6E7' text-anchor='middle'%3EPM%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="assets/styles.css">
+</head>
+<body>
+<script>window.PM_ONLINE_MODE = true;</script>
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="brand-mark">PM</div>
+      <div class="brand-text">
+        <strong>产品项目管理</strong>
+        <span>PRODUCT · 2026 / 2027</span>
+      </div>
+    </div>
+
+    <nav class="nav" id="nav">
+      <div class="nav-group">
+        <span class="nav-kicker">总览</span>
+        <button class="nav-item" data-nav="overview">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h5v5H2zM9 2h5v3H9zM9 7h5v7H9zM2 9h5v5H2z"/></svg>
+          <span>项目总览</span><em id="navCountOverview"></em>
+        </button>
+      </div>
+      <div class="nav-group">
+        <span class="nav-kicker">规划与执行</span>
+        <button class="nav-item" data-nav="map">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 13V3h1v10zM4 4h9v2H4zM4 8h6v2H4zM4 12h8v2H4z"/></svg>
+          <span>年度 MAP</span><em id="navCountMap">37</em>
+        </button>
+        <button class="nav-item" data-nav="pool">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12v2H2zM2 7h12v2H2zM2 11h8v2H2z"/></svg>
+          <span>项目工作池</span><em id="navCountPool"></em>
+        </button>
+        <button class="nav-item" data-nav="key">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1l2 4 4 .6-3 3 .7 4.4L8 11l-3.7 2 .7-4.4-3-3L6 5z"/></svg>
+          <span>重点项目</span><em id="navCountKey"></em>
+        </button>
+        <button class="nav-item" data-nav="wbs">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h3v3H2zM7 2h7v3H7zM5 7h3v3H5zM9 7h5v3H9zM5 12h3v2H5zM9 12h4v2H9z"/></svg>
+          <span>WBS 进度</span><em>14</em>
+        </button>
+      </div>
+      <div class="nav-group">
+        <span class="nav-kicker">专项跟踪</span>
+        <button class="nav-item" data-nav="outsource">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 5h9v6H1zM10 7h3l2 2v2h-5zM3 12h1v2H3zM11 12h1v2h-1z"/></svg>
+          <span>外协引进</span><em id="navCountOut"></em>
+        </button>
+        <button class="nav-item" data-nav="color">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a7 7 0 100 14A2 2 0 008 12a2 2 0 012-2h2a3 3 0 003-3c0-3.3-3.1-6-7-6zM4 8a1 1 0 110-2 1 1 0 010 2zm2-3a1 1 0 110-2 1 1 0 010 2zm4 0a1 1 0 110-2 1 1 0 010 2z"/></svg>
+          <span>配色管理</span><em id="navCountColor"></em>
+        </button>
+      </div>
+    </nav>
+
+    <div class="sidebar-foot">
+      <div class="snapshot">
+        <div class="snapshot-top"><span class="live-dot"></span>数据快照</div>
+        <b id="snapshotDate">—</b>
+        <span id="snapshotSource">产品项目管理表.xlsx</span>
+      </div>
+      
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <div class="eyebrow"><i></i><span id="pageEyebrow">COMMAND OVERVIEW</span></div>
+        <h1 id="pageTitle">项目总览</h1>
+      </div>
+      <div class="topbar-tools">
+        <div class="search" id="searchWrap">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input id="globalSearch" type="search" placeholder="搜索项目 / 负责人 / SPU" autocomplete="off">
+          <div class="search-results" id="searchResults" hidden></div>
+        </div>
+        <div class="today-chip" title="今日日期"><span>TODAY</span><b id="todayText">—</b></div>
+        <button class="icon-btn" data-act="print" title="打印当前页面">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 1h8v3H4zM2 5h12v6h-3v4H5v-4H2zM6 11h4v2H6z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main id="view" class="view"></main>
+    <footer class="foot">
+      <span>数据源：<b id="footSource">产品项目管理表.xlsx</b> · 工作类型 / 项目池 / 重点项目 / 外协 / 配色 / WBS</span>
+      <span class="foot-note">页面修改仅保存在本机浏览器；更新 Excel 后请运行 <code>python tools/build_data.py</code> 重新生成数据。</span>
+    </footer>
+  </div>
+</div>
+
+<div class="drawer-mask" id="drawerMask" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="详情">
+  <div class="drawer-head">
+    <span class="drawer-kicker" id="drawerKicker">DETAIL</span>
+    <button class="icon-btn" data-act="close-drawer" title="关闭">✕</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
+<div class="toast" id="toast" hidden></div>
+
+<div class="modal-mask" id="modalMask" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-head"><b id="modalTitle">编辑</b><button class="icon-btn" type="button" data-modal-close title="关闭">✕</button></div>
+    <div class="modal-body" id="modalBody"></div>
+  </div>
+</div>
+
+<script src="data/local_overrides.js"></script>
+<script src="assets/xlsx.full.min.js"></script>
+<script src="data/data.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
