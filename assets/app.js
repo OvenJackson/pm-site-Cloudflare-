@@ -1605,7 +1605,7 @@
         r.readAsArrayBuffer(f);
       };
       if (window.XLSX) parseExcel();
-      else loadScript('https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js').then(parseExcel).catch(function () { toast('Excel 解析组件加载失败'); });
+      else loadScript('assets/xlsx.full.min.js').then(parseExcel).catch(function () { loadScript('https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js').then(parseExcel).catch(function () { toast('Excel 解析组件加载失败'); }); });
     } else if (ext === 'pdf') {
       toast('正在解析 PDF…');
       loadScript('https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js').then(function () {
