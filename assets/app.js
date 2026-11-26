@@ -340,7 +340,7 @@
     }).catch(function () {});
   }
   function initOnlineSync() {
-    if (!onlineEnabled || !window.EventSource) return;
+    if (!onlinePayload || !window.EventSource) return;
     try {
       var es = new EventSource('/api/events');
       es.addEventListener('state', function () {
@@ -3336,7 +3336,7 @@
   bindGlobal();
   bootstrapOnline();
   initOnlineSync();
-  if (onlineEnabled && !onlineReadOnly && localTs > Number(onlinePayload.ts || 0) && (localStorage.getItem(APP_KEY) || localStorage.getItem(OV_KEY))) scheduleOnlineSave();
+  if (onlineEnabled && !onlineReadOnly && localTs > Number((onlinePayload && onlinePayload.ts) || 0) && (localStorage.getItem(APP_KEY) || localStorage.getItem(OV_KEY))) scheduleOnlineSave();
   if (serverEnabled && serverPayload) { touchSave(); scheduleServerSave(); }
 
   window.addEventListener('pagehide', function () {
