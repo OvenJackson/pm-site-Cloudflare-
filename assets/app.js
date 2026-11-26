@@ -307,19 +307,23 @@
   function startOnlinePolling() {
     if (!onlineMode || onlinePollTimer) return;
     onlinePollTimer = setInterval(function () {
-      fetch('api/state', { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
+      fetch('api/state?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
         if (!s) return;
         if (s.required && !ONLINE_TOKEN) onlineReadOnly = true;
-        if (Number(s.ts || 0) > lastSaveTs) {
+        var sts = Number(s.ts || 0);
+        if (sts > 0 && sts !== lastSaveTs) {
           storeOnlineState(s);
           location.reload();
         }
       }).catch(function () {});
-    }, 5000);
+    }, 3000);
+    window.addEventListener('storage', function (ev) {
+      if (ev.key === APP_KEY || ev.key === OV_KEY) location.reload();
+    });
   }
   function bootstrapOnline() {
     if (!onlineMode) return;
-    fetch('api/state', { cache: 'no-store' }).then(function (r) {
+    fetch('api/state?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
       if (!r.ok) throw new Error('no api');
       return r.json();
     }).then(function (s) {
@@ -330,14 +334,14 @@
         onlineReadOnly = false;
       }
       var sts = Number(s.ts || 0);
-      if (sts > lastSaveTs) {
+      if (sts > 0 && sts !== lastSaveTs) {
         storeOnlineState(s);
         location.reload();
         return;
       }
       if (!onlineReadOnly && localTs > sts && (localStorage.getItem(APP_KEY) || localStorage.getItem(OV_KEY))) scheduleOnlineSave();
       startOnlinePolling();
-    }).catch(function () {});
+    }).catch(function () { startOnlinePolling(); });
   }
   function initOnlineSync() {
     if (!onlinePayload || !window.EventSource) return;
