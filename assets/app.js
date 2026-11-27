@@ -379,10 +379,14 @@
     var out = {};
     Object.keys(secondary || {}).forEach(function (k) { out[k] = secondary[k]; });
     Object.keys(primary || {}).forEach(function (k) { out[k] = primary[k]; });
-    ['poolPatches', 'keyPatches', 'wbsOverride', 'mapPlan', 'wbsNotDo', 'wbsHidden'].forEach(function (k) {
+    ['poolPatches', 'keyPatches', 'wbsOverride', 'mapPlan', 'wbsNotDo', 'wbsHidden', 'outsourceMoves', 'outsourcePatches', 'outOrder', 'colorPatches'].forEach(function (k) {
       out[k] = Object.assign({}, (secondary && secondary[k]) || {}, (primary && primary[k]) || {});
     });
     out.poolAdded = mergeByKey(secondary && secondary.poolAdded, primary && primary.poolAdded, function (p) { return p && p.id; });
+    out.outsourceAdded = mergeByKey(secondary && secondary.outsourceAdded, primary && primary.outsourceAdded, function (o) { return o && o.id; });
+    out.outsourceDeleted = uniqList([].concat((secondary && secondary.outsourceDeleted) || [], (primary && primary.outsourceDeleted) || []));
+    out.colorDeleted = uniqList([].concat((secondary && secondary.colorDeleted) || [], (primary && primary.colorDeleted) || []));
+    out.colorAdded = mergeByKey(secondary && secondary.colorAdded, primary && primary.colorAdded, function (c) { return c && c.id; });
     out.recycle = mergeByKey(secondary && secondary.recycle, primary && primary.recycle, function (r) { return r && r.project ? r.project.id : JSON.stringify(r); });
     out.purged = uniqList([].concat((secondary && secondary.purged) || [], (primary && primary.purged) || []));
     out.purgedNames = uniqList([].concat((secondary && secondary.purgedNames) || [], (primary && primary.purgedNames) || []));
@@ -417,7 +421,7 @@
 
   /* ---------------- 可编辑数据（新增/编辑/删除/回收站/排期） ---------------- */
   var APP_KEY = 'pm_app_v1';
-  var APP = { poolAdded: [], poolPatches: {}, keyPatches: {}, recycle: [], purged: [], purgedNames: [], unkeyed: [], wbsOverride: {}, mapPlan: {}, wbsNotDo: {}, wbsHidden: {} };
+  var APP = { poolAdded: [], poolPatches: {}, keyPatches: {}, recycle: [], purged: [], purgedNames: [], unkeyed: [], wbsOverride: {}, mapPlan: {}, wbsNotDo: {}, wbsHidden: {}, wbsDeleted: [], outsourceMoves: {}, outsourceAdded: [], outsourcePatches: {}, outsourceDeleted: [], outOrder: {}, colorAdded: [], colorPatches: {}, colorDeleted: [] };
   try {
     var _app = JSON.parse(localStorage.getItem(APP_KEY) || '{}') || {};
     Object.keys(APP).forEach(function (k) { if (_app[k] != null) APP[k] = _app[k]; });
@@ -461,6 +465,31 @@
       var p = D.pool.filter(function (x) { return x.id === id; })[0];
       if (p) Object.assign(p, APP.poolPatches[id]);
     });
+    (APP.outsourceAdded || []).forEach(function (o) {
+      if (o && !D.outsourcing.some(function (x) { return x.id === o.id; })) D.outsourcing.push(cloneObj(o));
+    });
+    Object.keys(APP.outsourcePatches || {}).forEach(function (id) {
+      var o = D.outsourcing.filter(function (x) { return x.id === id; })[0];
+      if (o && APP.outsourcePatches[id]) Object.assign(o, APP.outsourcePatches[id]);
+    });
+    Object.keys(APP.outsourceMoves || {}).forEach(function (id) {
+      var o = D.outsourcing.filter(function (x) { return x.id === id; })[0];
+      if (o) o.progress = APP.outsourceMoves[id];
+    });
+    var outDel = {};
+    (APP.outsourceDeleted || []).forEach(function (id) { outDel[id] = true; });
+    D.outsourcing = D.outsourcing.filter(function (o) { return !outDel[o.id]; });
+    (APP.colorAdded || []).forEach(function (c) {
+      if (c && !D.colors.some(function (x) { return x.id === c.id; })) D.colors.push(cloneObj(c));
+    });
+    Object.keys(APP.colorPatches || {}).forEach(function (id) {
+      var c = D.colors.filter(function (x) { return x.id === id; })[0];
+      if (c && APP.colorPatches[id]) Object.assign(c, APP.colorPatches[id]);
+    });
+    var colorGone = {};
+    (APP.colorDeleted || []).forEach(function (id) { colorGone[id] = true; });
+    (APP.recycle || []).forEach(function (r) { if (r && r.kind === 'color' && r.color) colorGone[r.color.id] = true; });
+    D.colors = D.colors.filter(function (c) { return !colorGone[c.id]; });
     D.pool = D.pool.filter(function (p) { return !recycleIds[p.id] && !purgedIds[p.id]; });
 
     Object.keys(APP.keyPatches || {}).forEach(function (id) {
@@ -496,6 +525,9 @@
     });
     D.wbs = D.wbs.filter(function (w) { return WBS_REMOVED.indexOf(w.name) < 0; });
     Object.keys(APP.wbsHidden || {}).forEach(function (name) {
+      D.wbs = D.wbs.filter(function (w) { return w.name !== name; });
+    });
+    (APP.wbsDeleted || []).forEach(function (name) {
       D.wbs = D.wbs.filter(function (w) { return w.name !== name; });
     });
   }
@@ -691,6 +723,7 @@
   function upsertWbs(name, months, planDate) {
     var w = buildWbsProject(name, months, planDate);
     if (!w) return null;
+    APP.wbsDeleted = (APP.wbsDeleted || []).filter(function (n) { return n !== name; });
     if (OV.wbs) {
       var changed = false;
       Object.keys(OV.wbs).forEach(function (k) {
@@ -911,7 +944,7 @@
     D.wbs.forEach(function (w) { allTasks = allTasks.concat(flattenWbs(w).map(taskEff)); });
     var wbsDone = allTasks.filter(function (t) { return t.done === '已完成'; }).length;
     var wbsLate = allTasks.filter(function (t) { return t.late; }).length;
-    var colorDoing = D.colors.filter(function (c) { return c.done !== '已完成' && ['暂停', '取消'].indexOf(c.status) < 0; });
+    var colorDoing = D.colors.filter(function (c) { return c.done !== '已完成' && ['未启动', '取消'].indexOf(colorStatus(c)) < 0; });
     var outDoing = D.outsourcing.filter(function (o) { return o.progress !== '完成引进' && o.progress !== '不引进'; });
     return {
       poolActive: poolActive, poolDone: poolDone, keyActive: keyActive, keyRisk: keyRisk,
@@ -1133,8 +1166,8 @@
     var maxF = Math.max.apply(null, funnel.map(function (f) { return f.n; }).concat([1]));
 
     var colorDone = D.colors.filter(function (x) { return x.done === '已完成'; }).length;
-    var colorDoing = D.colors.filter(function (x) { return x.done !== '已完成' && x.status === '正常'; }).length;
-    var colorPaused = D.colors.filter(function (x) { return x.done !== '已完成' && x.status === '暂停'; }).length;
+    var colorDoing = D.colors.filter(function (x) { return x.done !== '已完成' && colorStatus(x) === '正常'; }).length;
+    var colorPaused = D.colors.filter(function (x) { return x.done !== '已完成' && colorStatus(x) === '未启动'; }).length;
     var colorOff = D.colors.length - colorDone - colorDoing - colorPaused;
     var colorPct = pct(colorDone, D.colors.length);
     var colorDoingPct = pct(colorDone + colorDoing, D.colors.length);
@@ -1250,39 +1283,6 @@
     h += '</div></div></div>';
     h += '</div>';
 
-    /* 底部三栏 */
-    h += '<div class="grid-3" style="margin-top:14px">';
-
-    h += '<div class="panel"><div class="panel-head"><div class="ph-l"><h3>WBS 月度任务负荷</h3><span class="ph-sub">按计划结束月统计</span></div><span class="ph-r">' + (months.length ? months[0].key.replace('-', '.') + ' — ' + months[months.length - 1].key.replace('-', '.') : '—') + '</span></div><div class="panel-body">';
-    h += '<div class="month-chart">';
-    mstat.forEach(function (x) {
-      var open = x.total - x.done;
-      h += '<div class="mc ' + (x.m.key === curM ? 'now' : '') + '">';
-      h += '<div class="mc-bars">';
-      if (open > 0) h += '<i style="height:' + Math.max(2, Math.round(open / maxM * 84)) + 'px"></i>';
-      if (x.done > 0) h += '<i class="done" style="height:' + Math.round(x.done / maxM * 84) + 'px"></i>';
-      h += '</div><div class="mc-val">' + x.total + '</div><div class="mc-lbl">' + x.m.label + '</div></div>';
-    });
-    h += '</div>';
-    h += '<div class="legend" style="margin-top:10px"><span><i class="lg-done"></i>已完成</span><span><i class="lg-active" style="background:#DCD5C4"></i>未完成</span><span><i style="background:#E7C3AE"></i>当前月份</span></div>';
-    h += '</div></div>';
-
-    h += '<div class="panel"><div class="panel-head"><div class="ph-l"><h3>外协引进漏斗</h3><span class="ph-sub">' + D.outsourcing.length + ' 个跟单记录</span></div><button class="panel-link" data-nav="outsource">查看 →</button></div><div class="panel-body">';
-    h += '<div class="funnel">';
-    funnel.forEach(function (f) {
-      h += '<div class="funnel-row"><span>' + f.stage + '</span><div class="fbar"><i style="width:' + (f.n / maxF * 100) + '%"></i></div><b>' + f.n + '</b></div>';
-    });
-    h += '</div>';
-    h += '<div style="margin-top:14px;font-size:10.5px;color:var(--faint);border-top:1px dashed var(--line-2);padding-top:9px">在跟 ' + c.outDoing.length + ' 项 · 已引进 ' + D.outsourcing.filter(function (o) { return o.adopted; }).length + ' 项</div>';
-    h += '</div></div>';
-
-    h += '<div class="panel"><div class="panel-head"><div class="ph-l"><h3>配色交付</h3><span class="ph-sub">' + D.colors.length + ' 条需求</span></div><button class="panel-link" data-nav="color">查看 →</button></div><div class="panel-body">';
-    h += '<div class="donut-wrap"><div class="donut" style="background:conic-gradient(var(--teal) 0 ' + colorPct + '%,var(--blue) ' + colorPct + '% ' + colorDoingPct + '%,#DCD6C6 ' + colorDoingPct + '% 100%)"><b>' + colorPct + '<em>%</em></b></div>';
-    h += '<div class="donut-legend"><div><i style="background:var(--teal)"></i>已完成<b>' + colorDone + '</b></div><div><i style="background:var(--blue)"></i>进行中<b>' + colorDoing + '</b></div><div><i style="background:#DCD6C6"></i>暂停 / 其他<b>' + colorPaused + '</b></div></div></div>';
-    h += '<div style="margin-top:14px;font-size:10.5px;color:var(--faint);border-top:1px dashed var(--line-2);padding-top:9px">平均交付 ' + avgColorCycle() + ' 天 · 待交付 ' + c.colorDoing.length + ' 条</div>';
-    h += '</div></div>';
-
-    h += '</div>';
     return h;
   }
 
@@ -1584,11 +1584,12 @@
       return l.split(/\s+/);
     });
   }
-  function handleImportFile(f) {
+  function handleImportFile(f, onRows) {
     var ext = (f.name.split('.').pop() || '').toLowerCase();
     var finish = function (rows) {
       rows = (rows || []).filter(function (r) { return r.some(function (c) { return String(c).trim(); }); });
       if (!rows.length) { toast('未识别到可导入的数据，请确认文件内容'); return; }
+      if (typeof onRows === 'function') { onRows(rows); return; }
       openImportPreview(rows);
     };
     if (ext === 'csv' || ext === 'txt') {
@@ -1989,7 +1990,216 @@
   }
 
   /* ---------------- 页面：外协 ---------------- */
-  var OUT_STAGES = ['寻源中', '一轮测试', '二轮测试', '完成引进', '不引进'];
+  var OUT_STAGES = [
+    { key: '寻源', label: '寻源', progress: '寻源中' },
+    { key: '一轮', label: '一轮', progress: '一轮测试' },
+    { key: '二轮', label: '二轮', progress: '二轮测试' },
+    { key: '引进', label: '引进', progress: '引进' },
+    { key: '引进结束', label: '引进结束', progress: '完成引进' },
+    { key: '不引进', label: '不引进', progress: '不引进' }
+  ];
+  var OUT_BALL_COLORS = ['#0078D4', '#8764B8', '#107C10', '#CA5010', '#8E562E', '#D13438', '#00B7C3', '#5C2D91', '#E3008C', '#498205'];
+  function outStageIndex(progress) {
+    if (!progress || progress === '寻源中' || progress === '寻源') return 0;
+    if (progress === '一轮测试' || progress === '一轮') return 1;
+    if (progress === '二轮测试' || progress === '二轮') return 2;
+    if (progress === '引进') return 3;
+    if (progress === '完成引进' || progress === '引进结束') return 4;
+    if (progress === '不引进') return 5;
+    return 0;
+  }
+  function outBallColor(o) {
+    if (o && /^#[0-9a-fA-F]{6}$/.test(o.color || '')) return o.color;
+    var s = (o.ptype || o.name || '') + '';
+    var n = 0;
+    for (var i = 0; i < s.length; i++) n = (n * 31 + s.charCodeAt(i)) >>> 0;
+    return OUT_BALL_COLORS[n % OUT_BALL_COLORS.length];
+  }
+  function outBallHtml(o) {
+    var st = outStatus(o);
+    var cls = 'out-ball';
+    if (st === '延期') cls += ' st-delay';
+    else if (st === '延期风险') cls += ' st-risk';
+    else if (st === '取消') cls += ' st-cancel';
+    else if (st === '待启动') cls += ' st-pending';
+    return '<div class="' + cls + '" draggable="true" data-act="open-out" data-id="' + esc(o.id) + '" data-outid="' + esc(o.id) + '" style="--ball-color:' + outBallColor(o) + '" title="' + esc(o.name + ' · ' + (o.supplier || '') + ' · ' + st) + '"><span>' + esc(o.name) + '</span></div>';
+  }
+  function outStatus(o) {
+    var idx = outStageIndex(o.progress);
+    if (idx === 5) return '取消';
+    if (o.statusManual && ['待启动', '正常', '延期风险', '延期'].indexOf(o.status) >= 0) return o.status;
+    if (idx === 4) return '正常';
+    var left = diffDays(iso(new Date()), o.planAdopt);
+    if (left === null) return '正常';
+    if (left < 0) return '延期';
+    if (left <= 7) return '延期风险';
+    return '正常';
+  }
+  function outProgressPct(o) {
+    var idx = outStageIndex(o.progress);
+    if (idx >= 5) return 0;
+    if (outStatus(o) === '待启动') return 0;
+    return [12.5, 25, 50, 75, 100][idx];
+  }
+  function outStatusChip(status) {
+    var cls = status === '延期' ? 'delay' : status === '延期风险' ? 'risk' : status === '取消' ? 'cancel' : status === '待启动' ? 'paused' : 'done';
+    return chip(cls, status);
+  }
+  function outTypeOpts(selected) {
+    var types = uniq(D.outsourcing.map(function (o) { return o.ptype; }).filter(Boolean));
+    if (!types.length) types = ['特种工程'];
+    return types.map(function (t) {
+      return '<option value="' + esc(t) + '"' + (selected === t ? ' selected' : '') + '>' + esc(t) + '</option>';
+    }).join('');
+  }
+  function outAddRowHtml(color, ptype) {
+    return '<div class="out-add-row">' +
+      '<label>产品名称 *<input data-oaf="name" placeholder="请输入产品名称" value=""></label>' +
+      '<label>产品类型<select data-oaf="ptype">' + outTypeOpts(ptype) + '</select></label>' +
+      '<label>状态<select data-oaf="status"><option value="待启动" selected>待启动</option><option value="正常">正常</option></select></label>' +
+      '<label>计划完成引进时间<input type="date" data-oaf="planAdopt"></label>' +
+      '<label>颜色标签<input type="color" data-oaf="color" value="' + esc(color || '#0078D4') + '"></label>' +
+      '<button type="button" class="btn out-row-del" data-outrowdel title="移除该产品">×</button>' +
+      '</div>';
+  }
+  function openOutAdd() {
+    var h = '<form id="outAddForm">';
+    h += '<div class="out-form-tip">可一次添加多个产品；保存后全部进入寻源池，小球颜色使用所选颜色标签。</div>';
+    h += '<div id="outAddRows" class="out-add-rows">' + outAddRowHtml(OUT_BALL_COLORS[0]) + '</div>';
+    h += '<div class="out-add-tools"><button type="button" id="outAddLine" class="btn">+ 添加一行</button></div>';
+    h += '<div class="form-actions"><button type="button" class="btn" data-modal-close>取消</button><button type="submit" class="btn primary">保存</button></div>';
+    h += '</form>';
+    openModal('新增外协产品', h);
+    var rows = $('#outAddRows');
+    $('#outAddLine').addEventListener('click', function () {
+      rows.insertAdjacentHTML('beforeend', outAddRowHtml(OUT_BALL_COLORS[rows.children.length % OUT_BALL_COLORS.length]));
+    });
+    rows.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-outrowdel]');
+      if (!b) return;
+      if (rows.children.length <= 1) { toast('至少保留一行产品信息'); return; }
+      b.closest('.out-add-row').remove();
+    });
+    $('#outAddForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var items = [], bad = null;
+      $$('.out-add-row', rows).forEach(function (row) {
+        var nameEl = row.querySelector('[data-oaf="name"]');
+        var item = {
+          name: nameEl.value.trim(),
+          ptype: row.querySelector('[data-oaf="ptype"]').value,
+          status: row.querySelector('[data-oaf="status"]').value || '待启动',
+          planAdopt: row.querySelector('[data-oaf="planAdopt"]').value || '',
+          color: row.querySelector('[data-oaf="color"]').value || '#0078D4'
+        };
+        if (!item.name && !bad) bad = nameEl;
+        items.push(item);
+      });
+      if (bad) { bad.focus(); toast('产品名称为必填项'); return; }
+      if (!items.length) { toast('请至少添加一个产品'); return; }
+      items.forEach(function (d) {
+        var o = {
+          id: uid('o'), name: d.name, status: d.status || '待启动', statusManual: true, progress: '寻源中', ptype: d.ptype,
+          supplier: '', sample1Date: null, sample1: '', result1: '', confirm1Date: null,
+          round2: false, sample2Date: null, sample2: '', result2: '', adopted: false,
+          adoptDate: null, actualDate: '', planAdopt: d.planAdopt || null, color: d.color
+        };
+        D.outsourcing.push(o);
+        APP.outsourceAdded.push(cloneObj(o));
+      });
+      appSave();
+      closeModal();
+      render();
+      toast('已新增 ' + items.length + ' 个产品，进入寻源池');
+    });
+  }
+  function openOutEdit(id) {
+    var o = D.outsourcing.filter(function (x) { return x.id === id; })[0];
+    if (!o) return;
+    var status = outStatus(o);
+    var statusOpts = ['待启动', '正常', '延期风险', '延期', '取消'].map(function (s) {
+      return '<option value="' + s + '"' + (status === s ? ' selected' : '') + '>' + s + '</option>';
+    }).join('');
+    var h = '<form id="outEditForm" class="form-grid">';
+    h += '<label class="full">产品名称 *<input name="name" required value="' + esc(o.name || '') + '"></label>';
+    h += '<label>供应商<input name="supplier" value="' + esc(o.supplier || '') + '"></label>';
+    h += '<label>产品类型<select name="ptype">' + outTypeOpts(o.ptype) + '</select></label>';
+    h += '<label>状态<select name="status">' + statusOpts + '</select></label>';
+    h += '<label>计划完成时间<input type="date" name="planAdopt" value="' + esc(o.planAdopt || '') + '"></label>';
+    h += '<label>实际完成时间<input type="date" name="actualDate" value="' + esc(o.actualDate || o.adoptDate || '') + '"></label>';
+    h += '<label>颜色标签<input type="color" name="color" value="' + esc(/^#[0-9a-fA-F]{6}$/.test(o.color || '') ? o.color : outBallColor(o)) + '"></label>';
+    h += '<div class="full out-status-line"><span>状态标签</span><span id="outEditStatusPreview">' + outStatusChip(status) + '</span><small>状态可手动调整；待启动时进度停在寻源，放入不引进后自动显示取消</small></div>';
+    h += '<div class="form-actions out-edit-actions"><button type="button" class="btn danger-solid out-del-btn" id="outEditDel">删除</button><button type="button" class="btn" data-modal-close>取消</button><button type="submit" class="btn primary">保存</button></div>';
+    h += '</form>';
+    openModal('编辑外协产品', h);
+    var statusEl = $('#outEditForm').elements['status'];
+    statusEl.addEventListener('change', function () {
+      var pv = $('#outEditStatusPreview');
+      if (pv) pv.innerHTML = outStatusChip(this.value);
+    });
+    $('#outEditDel').addEventListener('click', function () {
+      if (!confirm('确定删除“' + o.name + '”吗？删除后不可恢复。')) return;
+      APP.outsourceDeleted = APP.outsourceDeleted || [];
+      if (APP.outsourceDeleted.indexOf(id) < 0) APP.outsourceDeleted.push(id);
+      D.outsourcing = D.outsourcing.filter(function (x) { return x.id !== id; });
+      APP.outsourceAdded = (APP.outsourceAdded || []).filter(function (x) { return x && x.id !== id; });
+      delete APP.outsourcePatches[id];
+      delete APP.outsourceMoves[id];
+      Object.keys(APP.outOrder || {}).forEach(function (k) {
+        APP.outOrder[k] = (APP.outOrder[k] || []).filter(function (x) { return x !== id; });
+      });
+      appSave();
+      closeModal();
+      closeDrawer();
+      render();
+      toast('已删除该外协产品');
+    });
+    $('#outEditForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var el = this.elements;
+      var name = el['name'].value.trim();
+      if (!name) { toast('请输入产品名称'); el['name'].focus(); return; }
+      var newStatus = el['status'].value;
+      var oldProg = o.progress;
+      var newProg = o.progress;
+      if (newStatus === '待启动') newProg = '寻源中';
+      else if (newStatus === '取消') newProg = '不引进';
+      else if (outStageIndex(o.progress) === 5) newProg = '寻源中';
+      var patch = {
+        name: name,
+        supplier: el['supplier'].value.trim(),
+        ptype: el['ptype'].value,
+        status: newStatus,
+        statusManual: true,
+        planAdopt: el['planAdopt'].value || null,
+        actualDate: el['actualDate'].value || '',
+        color: el['color'].value || outBallColor(o),
+        progress: newProg,
+        adopted: newProg === '完成引进'
+      };
+      Object.assign(o, patch);
+      APP.outsourcePatches[id] = Object.assign({}, APP.outsourcePatches[id] || {}, patch);
+      if (newProg !== oldProg) APP.outsourceMoves[id] = newProg;
+      appSave();
+      closeModal();
+      render();
+      openOut(id);
+      toast('已保存外协产品信息');
+    });
+  }
+  
+function outOrderedBalls(arr, prog) {
+    var order = (APP.outOrder || {})[prog] || [];
+    var pos = {};
+    order.forEach(function (id, i) { pos[id] = i; });
+    return arr.slice().sort(function (a, b) {
+      var ia = pos[a.id], ib = pos[b.id];
+      if (ia == null && ib == null) return 0;
+      if (ia == null) return 1;
+      if (ib == null) return -1;
+      return ia - ib;
+    });
+  }
   function viewOutsource() {
     var st = state.out;
     var types = uniq(D.outsourcing.map(function (o) { return o.ptype; }));
@@ -1998,46 +2208,60 @@
       if (st.q && (o.name + ' ' + o.supplier + ' ' + o.sample1 + ' ' + o.result1 + ' ' + o.result2).toLowerCase().indexOf(st.q.toLowerCase()) < 0) return false;
       return true;
     });
-    var h = '<div class="page-head"><div><h2>外协产品引进进度</h2><p>从寻源、送样测试到确认引进的全流程跟踪；每条记录对应一个样品批次。</p></div><div class="head-meta"><div><span>跟单记录</span><b>' + D.outsourcing.length + '</b></div><div><span>已引进</span><b>' + D.outsourcing.filter(function (o) { return o.adopted; }).length + '</b></div><div><span>在测</span><b>' + D.outsourcing.filter(function (o) { return o.progress === '一轮测试' || o.progress === '二轮测试'; }).length + '</b></div></div></div>';
+    var buckets = {};
+    OUT_STAGES.forEach(function (s) { buckets[s.progress] = []; });
+    list.forEach(function (o) { buckets[OUT_STAGES[outStageIndex(o.progress)].progress].push(o); });
+    Object.keys(buckets).forEach(function (k) { buckets[k] = outOrderedBalls(buckets[k], k); });
+    var pool = buckets['寻源中'] || [];
+    var inTest = (buckets['一轮测试'] || []).length + (buckets['二轮测试'] || []).length;
+    var adopted = (buckets['完成引进'] || []).length;
+
+    var h = '<div class="page-head"><div><h2>外协产品引进进度</h2><p>寻源池 → 一轮 → 二轮 → 引进 → 引进结束；拖动小球即可调整阶段，点击小球查看详情。</p></div><div class="head-meta"><div><span>跟单记录</span><b>' + D.outsourcing.length + '</b></div><div><span>已引进</span><b>' + adopted + '</b></div><div><span>在测</span><b>' + inTest + '</b></div></div></div>';
 
     h += '<div class="toolbar"><div class="field no-caret"><input id="out-q" type="search" placeholder="搜索产品 / 供应商 / 测试结果" value="' + esc(st.q) + '"></div>';
     h += selectField('out-type', '全部品类', types.map(function (t) { return [t, t]; }), st.type);
+    h += '<button type="button" class="btn primary out-add-btn" data-act="out-add"><b>+</b> 新增</button>';
     h += '<div class="spacer"></div><span class="count-pill">显示 <b>' + list.length + '</b> / ' + D.outsourcing.length + '</span></div>';
 
-    h += '<div class="kanban">';
-    OUT_STAGES.forEach(function (stage) {
-      var cards = list.filter(function (o) { return o.progress === stage; });
-      h += '<div class="kcol"><div class="kcol-head"><b>' + stage + '</b><em>' + cards.length + '</em></div>';
-      cards.forEach(function (o) {
-        var idx = OUT_STAGES.indexOf(o.progress);
-        h += '<div class="kcard" data-act="open-out" data-id="' + o.id + '">';
-        h += '<h5>' + esc(o.name) + '</h5>';
-        h += '<div class="k-sub">' + esc(o.supplier) + ' · ' + esc(o.ptype) + '</div>';
-        if (o.sample1) h += '<div class="k-res">' + esc(o.sample1) + (o.result1 ? '<br>' + esc(o.result1) : '') + '</div>';
-        h += '<div class="k-foot"><span>S1 · ' + fmt(o.sample1Date) + '</span><span>' + (o.planAdopt ? '目标 ' + fmt(o.planAdopt) : '&nbsp;') + '</span></div>';
-        h += '<div class="steps">';
-        for (var i = 0; i < 5; i++) {
-          h += '<i class="' + (i < idx ? 'on' : i === idx ? 'now' : '') + '"></i>';
-        }
-        h += '</div></div>';
-      });
-      if (!cards.length) h += '<div class="empty" style="padding:18px 8px;font-size:10.5px">暂无记录</div>';
-      h += '</div>';
+    h += '<div class="out-board">';
+    h += '<div class="out-pool-block"><div class="out-block-head"><div><b>寻源池</b><span>所有新寻源产品先进入这里</span></div><em>' + pool.length + ' 个</em></div>';
+    h += '<div class="out-container out-pool" data-outstage="寻源中">' + (pool.length ? pool.map(outBallHtml).join('') : '<div class="out-empty">把产品拖到这里开始寻源</div>') + '</div></div>';
+
+    h += '<div class="out-lower"><div class="out-bowls">';
+    [1, 2, 3, 4].forEach(function (idx) {
+      var s = OUT_STAGES[idx], arr = buckets[s.progress] || [];
+      h += '<div class="out-bowl-block"><div class="out-bowl-head"><b>' + s.label + '</b><em>' + arr.length + '</em></div>';
+      h += '<div class="out-container out-bowl" data-outstage="' + s.progress + '">' + (arr.length ? arr.map(outBallHtml).join('') : '<div class="out-empty">空</div>') + '</div></div>';
     });
     h += '</div>';
-    h += '<div style="margin-top:12px;font-size:10.5px;color:var(--faint)">阶段说明：寻源中 → 一轮测试 → 二轮测试 → 完成引进 / 不引进。点击卡片查看两次样品的时间与测试结论。</div>';
+    var trash = buckets['不引进'] || [];
+    h += '<div class="out-trash-block"><div class="out-trash-head"><b>不引进</b><em>' + trash.length + '</em></div>';
+    h += '<div class="out-container out-trash" data-outstage="不引进">' + (trash.length ? trash.map(outBallHtml).join('') : '') + '</div></div>';
+    h += '</div></div>';
+
+    h += '<div class="out-hint">拖动小球可跨容器移动，也可在同一容器内调整左右/上下顺序；点击小球查看产品进度、基本信息和样品测试记录。</div>';
     return h;
   }
 
-  /* ---------------- 页面：配色 ---------------- */
+  var COLOR_STATUSES = ['延期', '延期风险', '正常', '取消', '未启动'];
+  function colorStatus(c) {
+    if (COLOR_STATUSES.indexOf(c.status) >= 0) return c.status;
+    if (c.status === '暂停') return '未启动';
+    var s = poolState({ status: c.status, done: c.done, plan: c.due });
+    return s === 'delay' ? '延期' : s === 'risk' ? '延期风险' : s === 'cancel' ? '取消' : (s === 'planned' || s === 'paused') ? '未启动' : '正常';
+  }
+  function colorStatusChip(status) {
+    var cls = status === '延期' ? 'delay' : status === '延期风险' ? 'risk' : status === '取消' ? 'cancel' : status === '未启动' ? 'planned' : 'done';
+    return chip(cls, status);
+  }
   function viewColor() {
     var st = state.color;
     var spus = uniq(D.colors.map(function (c) { return c.spu; }));
     var depts = uniq(D.colors.map(function (c) { return c.dept; }));
     var list = D.colors.filter(function (c) {
-      var s = poolState({ status: c.status, done: c.done, plan: c.due });
+      var cs = colorStatus(c);
       if (st.spu && c.spu !== st.spu) return false;
-      if (st.status && s !== st.status) return false;
+      if (st.status && cs !== st.status) return false;
       if (st.dept && c.dept !== st.dept) return false;
       if (st.q && (c.spu + ' ' + c.color + ' ' + c.ctype + ' ' + c.ref + ' ' + c.note).toLowerCase().indexOf(st.q.toLowerCase()) < 0) return false;
       return true;
@@ -2049,7 +2273,7 @@
     });
     var done = D.colors.filter(function (c) { return c.done === '已完成'; }).length;
     var doing = D.colors.filter(function (c) { return c.done !== '已完成' && c.status === '正常'; }).length;
-    var paused = D.colors.filter(function (c) { return c.status === '暂停'; }).length;
+    var paused = D.colors.filter(function (c) { return colorStatus(c) === '未启动'; }).length;
 
     var h = '<div class="page-head"><div><h2>产品配色需求与交付</h2><p>按需求部门与 SPU 跟踪配色进度，色卡色块仅按色名近似显示，最终以实物为准。</p></div><div class="head-meta"><div><span>需求总数</span><b>' + D.colors.length + '</b></div><div><span>已完成</span><b>' + done + '</b></div><div><span>平均周期</span><b>' + avgColorCycle() + ' 天</b></div></div></div>';
 
@@ -2057,17 +2281,20 @@
     h += kpi('配色需求', D.colors.length, '条', 'info', '01', '覆盖 ' + spus.length + ' 个 SPU');
     h += kpi('已完成', done, '条', 'ok', '02', '完成率 ' + pct(done, D.colors.length) + '%');
     h += kpi('进行中', doing, '条', 'warm', '03', '正常推进中的需求');
-    h += kpi('暂停', paused, '条', 'mute', '04', '等待原料或配方切换');
+    h += kpi('未启动', paused, '条', 'mute', '04', '尚未启动的配色需求');
     h += '</div>';
 
     h += '<div class="toolbar"><div class="field no-caret"><input id="color-q" type="search" placeholder="搜索 SPU / 颜色 / 参考" value="' + esc(st.q) + '"></div>';
     h += selectField('color-spu', '全部 SPU', spus.map(function (s) { return [s, s]; }), st.spu);
-    h += selectField('color-status', '全部状态', [['active', '进行中'], ['done', '已完成'], ['delay', '延期'], ['paused', '暂停']], st.status);
+    h += selectField('color-status', '全部状态', COLOR_STATUSES.map(function (s) { return [s, s]; }), st.status);
     h += selectField('color-dept', '全部需求部门', depts.map(function (s) { return [s, s]; }), st.dept);
+    h += resetBtn('color');
+    h += '<button class="btn primary" data-act="color-add">＋ 新增项目</button>';
+    h += '<button class="btn" data-act="open-recycle">回收站' + (APP.recycle.length ? ' (' + APP.recycle.length + ')' : '') + '</button>';
     h += '<div class="spacer"></div><span class="count-pill">显示 <b>' + list.length + '</b> / ' + D.colors.length + '</span></div>';
 
     h += '<div class="panel"><div class="panel-body flush"><div class="table-scroll"><table class="tbl"><thead><tr>';
-    h += '<th>SPU</th><th>颜色</th><th>项目类型</th><th>需求部门</th><th>期望交付</th><th>试色方式</th><th>完成时间</th><th>周期 / 剩余</th><th>状态</th><th>备注</th>';
+    h += '<th>SPU</th><th>颜色</th><th>项目类型</th><th>需求部门</th><th>期望交付</th><th>试色方式</th><th>完成时间</th><th>周期 / 剩余</th><th>状态</th><th>备注</th><th>操作</th>';
     h += '</tr></thead><tbody>';
     list.forEach(function (c) {
       var s = poolState({ status: c.status, done: c.done, plan: c.due });
@@ -2082,11 +2309,12 @@
       h += '<td class="muted nowrap">' + esc(c.trial || '—') + '</td>';
       h += '<td class="num">' + fmt(c.finish) + '</td>';
       h += '<td class="num ' + (c.done === '已完成' ? 'days-done' : (left != null && left < 0 ? 'days-hot' : '')) + '">' + (c.done === '已完成' ? (cyc != null ? cyc + ' 天' : '—') : left == null ? '—' : left < 0 ? '延期 ' + Math.abs(left) + ' 天' : '剩 ' + left + ' 天') + '</td>';
-      h += '<td>' + stateChip({ status: c.status, done: c.done, plan: c.due }) + '</td>';
+      h += '<td>' + colorStatusChip(colorStatus(c)) + '</td>';
       h += '<td class="ellip" title="' + esc(c.note) + '">' + esc(c.note || '—') + '</td>';
+      h += '<td><div class="row-actions"><button data-act="color-edit" data-id="' + esc(c.id) + '">编辑</button><button data-act="color-del" data-id="' + esc(c.id) + '">删除</button></div></td>';
       h += '</tr>';
     });
-    if (!list.length) h += '<tr><td colspan="10"><div class="empty"><b>没有匹配的配色需求</b>调整筛选条件试试</div></td></tr>';
+    if (!list.length) h += '<tr><td colspan="11"><div class="empty"><b>没有匹配的配色需求</b>调整筛选条件试试</div></td></tr>';
     h += '</tbody></table></div></div></div>';
     return h;
   }
@@ -2175,7 +2403,7 @@
         var stateCls = s.late ? ' has-late' : wr ? ' has-risk' : '';
         h += '<button class="wbs-proj' + stateCls + (w.name === proj.name ? ' on' : '') + '" data-wbsproj="' + esc(w.name) + '">';
         var wpri = (wm && wm.priority) || w.priority;
-        h += '<div class="wp-top"><div class="wp-name-row">' + wbsMonthBlock(wbsPlanDate(w)) + '<b class="wp-title">' + (isKeyWbsName(w.name) ? '⭐' : '') + esc(w.name) + '</b></div>' + (wpri ? tag(wpri, wpri === 'P0' ? 'rust' : 'amber') : '') + '</div>';
+        h += '<div class="wp-top"><div class="wp-name-row">' + wbsMonthBlock(wbsPlanDate(w)) + '<b class="wp-title">' + (isKeyWbsName(w.name) ? '⭐' : '') + esc(w.name) + '</b></div>' + (wpri ? tag(wpri, wpri === 'P0' ? 'rust' : 'amber') : '') + '<span class="wbs-del" data-wbsdel="' + esc(w.name) + '" title="删除 WBS">×</span></div>';
         h += '<div class="wp-tags">' + (wm ? typeTag(wm.type) + personTag(wm.owner) : '') + '</div>';
         h += '<div class="wp-sub"><div class="bar thin"><i class="' + (s.late ? 'delay' : wr ? 'risk' : '') + '" style="width:' + s.pct + '%"></i></div><em>' + s.pct + '%</em></div>';
         h += '</button>';
@@ -2537,6 +2765,134 @@
     });
   }
 
+  function poolAddRowHtml() {
+    var typeOpts = PROJECT_TYPES.map(function (t) { return '<option value="' + esc(t) + '">' + esc(t) + '</option>'; }).join('');
+    var statusOpts = ['未开展', '正常', '暂停'].map(function (t) { return '<option value="' + t + '">' + t + '</option>'; }).join('');
+    var priOpts = ['', 'P0', 'P1', 'P2'].map(function (t) { return '<option value="' + t + '">' + (t || '无') + '</option>'; }).join('');
+    var monthOpts = '<option value="">请选择</option>' + ['3', '4', '6'].map(function (n) { return '<option value="' + n + '">' + n + ' 个月</option>'; }).join('');
+    var anchorOpts = '<option value="">请选择</option>' + ['4.2|TR4 中试技术评审', '5.4|ADCP 产品中试转产评审', '2.6|项目立项', '3.2|TR3 小试技术评审', '1.4|CDCP 产品概念决策评审'].map(function (x) {
+      var a = x.split('|');
+      return '<option value="' + a[0] + '">' + a[0] + ' ' + a[1] + '</option>';
+    }).join('');
+    return '<div class="batch-row pool-batch-row">' +
+      '<label>项目名称 *<input data-paf="name" placeholder="请输入项目名称"></label>' +
+      '<label>产品开发类型<select data-paf="type">' + typeOpts + '</select></label>' +
+      '<label>项目状态<select data-paf="status">' + statusOpts + '</select></label>' +
+      '<label>项目成员<input data-paf="owner" placeholder="负责人"></label>' +
+      '<label>计划完成时间<input type="date" data-paf="plan"></label>' +
+      '<label>优先级<select data-paf="priority">' + priOpts + '</select></label>' +
+      '<div class="batch-flags"><label><input type="checkbox" data-paf="isKey">重点</label><label><input type="checkbox" data-paf="genWbs">WBS</label></div>' +
+      '<button type="button" class="btn out-row-del" data-prowdel title="移除">×</button>' +
+      '<label class="batch-note">备注<input data-paf="note" placeholder="选填"></label>' +
+      '<div class="pool-wbs-setup" data-wbs-setup hidden>' +
+        '<label>WBS 项目周期<select data-paf="months">' + monthOpts + '</select></label>' +
+        '<label>锚点任务<select data-paf="anchor">' + anchorOpts + '</select></label>' +
+        '<label>锚点完成日期<input type="date" data-paf="anchorDate"></label>' +
+        '<div class="wbs-setup-hint">生成 WBS 需填写计划完成时间或锚点完成日期；周期与锚点可手动调整。</div>' +
+      '</div>' +
+      '</div>';
+  }
+  function openPoolAdd() {
+    var h = '<form id="poolAddForm">';
+    h += '<div class="out-form-tip">可一次添加多个项目；勾选 WBS 并填写周期与锚点后，保存时会同步生成 WBS 任务清单。</div>';
+    h += '<div id="poolAddRows" class="batch-rows">' + poolAddRowHtml() + '</div>';
+    h += '<div class="out-add-tools"><button type="button" id="poolAddLine" class="btn">+ 添加一行</button></div>';
+    h += '<div class="form-actions"><button type="button" class="btn imp-open-btn" data-pool-imp><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5h4l1.4 1.6H14.5v8H1.5z"/></svg>批量导入</button><button type="button" class="btn" data-modal-close>取消</button><button type="submit" class="btn primary">保存</button></div>';
+    h += '</form>';
+    openModal('新增项目', h);
+    var modal = document.querySelector('.modal'); if (modal) modal.classList.add('wide');
+    var rows = $('#poolAddRows');
+    $('#poolAddLine').addEventListener('click', function () {
+      rows.insertAdjacentHTML('beforeend', poolAddRowHtml());
+    });
+    rows.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-prowdel]');
+      if (!b) return;
+      if (rows.children.length <= 1) { toast('至少保留一行'); return; }
+      b.closest('.batch-row').remove();
+    });
+    rows.addEventListener('change', function (ev) {
+      var t = ev.target, row = t.closest('.batch-row');
+      if (!row) return;
+      var gen = row.querySelector('[data-paf="genWbs"]');
+      var type = row.querySelector('[data-paf="type"]');
+      var months = row.querySelector('[data-paf="months"]');
+      var anchor = row.querySelector('[data-paf="anchor"]');
+      var plan = row.querySelector('[data-paf="plan"]');
+      var anchorDate = row.querySelector('[data-paf="anchorDate"]');
+      if (t.getAttribute('data-paf') === 'genWbs') {
+        row.querySelector('[data-wbs-setup]').hidden = !gen.checked;
+        if (gen.checked) {
+          if (!months.value) months.value = isShortType(type.value) ? '3' : '6';
+          if (!anchor.value) anchor.value = (isShortType(type.value) && months.value === '3') ? '4.2' : '5.4';
+          if (!anchorDate.value && plan.value) anchorDate.value = plan.value;
+        }
+      }
+      if (t.getAttribute('data-paf') === 'type' && gen.checked) {
+        months.value = isShortType(type.value) ? '3' : '6';
+        anchor.value = months.value === '3' ? '4.2' : '5.4';
+      }
+      if (t.getAttribute('data-paf') === 'plan' && gen.checked && !anchorDate.value) anchorDate.value = plan.value;
+    });
+    var imp = $('[data-pool-imp]');
+    if (imp) imp.addEventListener('click', function () { openImportPicker(); });
+    $('#poolAddForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var items = [], bad = null, dup = null;
+      var seen = {};
+      $$('.batch-row', rows).forEach(function (row) {
+        var nameEl = row.querySelector('[data-paf="name"]');
+        var name = nameEl.value.trim();
+        if (!name && !bad) bad = nameEl;
+        if (name) {
+          if (seen[name] || D.pool.some(function (x) { return x.name === name; })) { if (!dup) dup = name; }
+          seen[name] = true;
+        }
+        items.push({
+          name: name,
+          type: row.querySelector('[data-paf="type"]').value,
+          status: row.querySelector('[data-paf="status"]').value || '未开展',
+          owner: row.querySelector('[data-paf="owner"]').value.trim(),
+          plan: row.querySelector('[data-paf="plan"]').value || null,
+          priority: row.querySelector('[data-paf="priority"]').value,
+          isKey: row.querySelector('[data-paf="isKey"]').checked,
+          genWbs: row.querySelector('[data-paf="genWbs"]').checked,
+          months: row.querySelector('[data-paf="months"]').value,
+          anchor: row.querySelector('[data-paf="anchor"]').value,
+          anchorDate: row.querySelector('[data-paf="anchorDate"]').value || '',
+          note: row.querySelector('[data-paf="note"]').value.trim(),
+          rowEl: row
+        });
+      });
+      if (bad) { bad.focus(); toast('项目名称为必填项'); return; }
+      if (dup) { toast('项目“' + dup + '”已存在，请修改后保存'); return; }
+      var badWbs = null;
+      items.forEach(function (d) {
+        if (!d.genWbs) return;
+        d.months = d.months || (isShortType(d.type) ? '3' : '6');
+        d.anchor = d.anchor || ((isShortType(d.type) && d.months === '3') ? '4.2' : '5.4');
+        if (!d.anchorDate && d.plan) d.anchorDate = d.plan;
+        if (!d.plan && d.anchorDate) d.plan = planFromAnchor(+(d.months || '4'), d.anchor, d.anchorDate) || null;
+        if (!d.plan && !badWbs) badWbs = d.rowEl.querySelector('[data-paf="plan"]');
+      });
+      if (badWbs) { badWbs.focus(); toast('生成 WBS 的项目需填写计划完成时间或锚点完成日期'); return; }
+      items.forEach(function (d) {
+        var p = {
+          id: uid('p'), type: d.type, status: d.status, done: '未完成', name: d.name,
+          must: '□', owner: d.owner, founded: TODAY, started: TODAY, plan: d.plan,
+          actual: null, priority: d.priority, phase: '', note: d.note, isKey: !!d.isKey
+        };
+        D.pool.push(p);
+        APP.poolAdded.push(cloneObj(p));
+        if (d.isKey) ensureKey(p);
+        if (d.genWbs && p.plan) upsertWbs(p.name, +(d.months || (isShortType(d.type) ? 3 : 6)), p.plan);
+      });
+      appSave();
+      closeModal();
+      render();
+      toast('已新增 ' + items.length + ' 个项目');
+    });
+  }
   function saveProjectForm(mode, id, data) {
     if (mode === 'pool-add') {
       if (D.pool.some(function (x) { return x.name === data.name; })) { toast('已存在同名项目，请更换项目名称'); return; }
@@ -2631,19 +2987,47 @@
   }
 
   function openRecycle() {
-    var h = '<div style="font-size:11.5px;color:var(--text-2);margin-bottom:8px">删除的项目会暂存于此，可还原或彻底删除。</div>';
+    var h = '<div style="font-size:11.5px;color:var(--text-2);margin-bottom:8px">删除的项目和配色需求会暂存于此，可还原或彻底删除。</div>';
     if (!APP.recycle.length) h += '<div class="empty">回收站为空</div>';
     APP.recycle.forEach(function (r) {
-      h += '<div class="recycle-item"><div><b>' + esc(r.project.name) + '</b><div class="rs-meta">' + esc(r.project.type || '—') + ' · ' + esc(r.project.owner || '—') + ' · 计划完成 ' + fmt(r.project.plan) + (r.wasKey ? ' · 年度重点项目' : '') + '</div></div>';
-      h += '<div class="row-actions"><button data-rec="restore" data-rid="' + esc(r.project.id) + '">还原</button><button data-rec="purge" data-rid="' + esc(r.project.id) + '">彻底删除</button></div></div>';
+      var isColor = r.kind === 'color' && r.color;
+      var obj = isColor ? r.color : r.project;
+      if (!obj) return;
+      var title = isColor ? (obj.spu + ' · ' + obj.color) : obj.name;
+      var meta = isColor
+        ? '配色需求 · ' + (obj.dept || '—') + ' · 期望交付 ' + fmt(obj.due)
+        : (obj.type || '—') + ' · ' + (obj.owner || '—') + ' · 计划完成 ' + fmt(obj.plan) + (r.wasKey ? ' · 年度重点项目' : '');
+      h += '<div class="recycle-item"><div><b>' + esc(title) + '</b><div class="rs-meta">' + esc(meta) + '</div></div>';
+      h += '<div class="row-actions"><button data-rec="restore" data-rid="' + esc(obj.id) + '" data-rkind="' + (isColor ? 'color' : 'project') + '">还原</button><button data-rec="purge" data-rid="' + esc(obj.id) + '" data-rkind="' + (isColor ? 'color' : 'project') + '">彻底删除</button></div></div>';
     });
     openModal('回收站', h);
     $$('#modalBody [data-rec]').forEach(function (b) {
       b.addEventListener('click', function () {
-        var rid = b.getAttribute('data-rid'), act = b.getAttribute('data-rec');
-        var idx = APP.recycle.findIndex(function (r) { return r.project.id === rid; });
+        var rid = b.getAttribute('data-rid'), act = b.getAttribute('data-rec'), kind = b.getAttribute('data-rkind') || 'project';
+        var idx = APP.recycle.findIndex(function (r) {
+          var isC = r.kind === 'color' && r.color;
+          var oid = isC ? r.color.id : (r.project && r.project.id);
+          return (isC ? 'color' : 'project') === kind && oid === rid;
+        });
         if (idx < 0) return;
-        if (act === 'restore') {
+        if (kind === 'color') {
+          var snapC = APP.recycle[idx];
+          var cname = snapC.color.spu + ' · ' + snapC.color.color;
+          if (act === 'restore') {
+            APP.recycle.splice(idx, 1);
+            if (!D.colors.some(function (x) { return x.id === snapC.color.id; })) D.colors.push(snapC.color);
+            APP.colorDeleted = (APP.colorDeleted || []).filter(function (x) { return x !== snapC.color.id; });
+            appSave(); toast('已还原');
+          } else {
+            if (!confirm('彻底删除后不可恢复，确定删除“' + cname + '”？')) return;
+            APP.recycle.splice(idx, 1);
+            APP.colorDeleted = APP.colorDeleted || [];
+            if (APP.colorDeleted.indexOf(snapC.color.id) < 0) APP.colorDeleted.push(snapC.color.id);
+            APP.colorAdded = (APP.colorAdded || []).filter(function (x) { return x.id !== snapC.color.id; });
+            delete APP.colorPatches[snapC.color.id];
+            appSave(); toast('已彻底删除');
+          }
+        } else if (act === 'restore') {
           var snap = APP.recycle.splice(idx, 1)[0];
           if (!D.pool.some(function (x) { return x.id === snap.project.id; })) D.pool.push(snap.project);
           if (snap.wasKey && snap.key && !D.keyProjects.some(function (x) { return x.id === snap.key.id; })) D.keyProjects.push(snap.key);
@@ -2811,17 +3195,30 @@
   function openOut(id) {
     var o = D.outsourcing.filter(function (x) { return x.id === id; })[0];
     if (!o) return;
-    var stageIdx = OUT_STAGES.indexOf(o.progress);
-    var h = '<h3>' + esc(o.name) + '</h3><div class="drawer-tags">' + chip(o.progress === '完成引进' ? 'done' : o.progress === '不引进' ? 'paused' : 'active', o.progress) + tag(o.ptype, 'plain') + (o.adopted ? tag('已引进', 'teal') : '') + '</div>';
-    h += '<div class="drawer-section"><div class="ds-title">引进流程</div><div class="steps" style="margin-top:0">';
-    for (var i = 0; i < 5; i++) h += '<i class="' + (i < stageIdx ? 'on' : i === stageIdx ? 'now' : '') + '"></i>';
-    h += '</div><div style="display:flex;justify-content:space-between;font-size:9.5px;color:var(--faint);margin-top:6px"><span>寻源</span><span>一轮</span><span>二轮</span><span>引进</span><span>结束</span></div></div>';
+    var stageIdx = outStageIndex(o.progress);
+    var stageNo = stageIdx >= 5 ? 0 : stageIdx;
+    var pctRaw = outProgressPct(o);
+    var pct = Math.round(pctRaw);
+    var stageName = OUT_STAGES[stageIdx] ? OUT_STAGES[stageIdx].label : '寻源';
+    var statusText = outStatus(o);
+    var h = '<h3>' + esc(o.name) + '</h3><div class="drawer-tags">' + outStatusChip(statusText) + chip(o.progress === '完成引进' ? 'done' : o.progress === '不引进' ? 'paused' : 'active', o.progress) + tag(o.ptype, 'plain') + '</div>';
+    h += '<div class="drawer-inline-actions"><button type="button" class="btn" data-act="out-edit" data-id="' + esc(o.id) + '">编辑信息</button></div>';
+    h += '<div class="drawer-section"><div class="ds-title">引进进度</div>';
+    if (stageIdx >= 5) {
+      h += '<div class="out-progress-note danger">当前处于「不引进」垃圾桶，未进入引进流程。</div>';
+    } else {
+      h += '<div class="out-progress-bar"><div class="out-progress-fill" style="width:' + pct + '%"></div><span class="out-progress-pct">' + pct + '%</span></div>';
+      h += '<div class="out-progress-labels">';
+      for (var i = 0; i < 5; i++) h += '<span class="' + (i <= stageNo ? 'on' : '') + '">' + OUT_STAGES[i].label + '</span>';
+      h += '</div><div class="out-progress-now">当前阶段：<b>' + stageName + '</b></div>';
+    }
+    h += '</div>';
     h += '<div class="drawer-section"><div class="ds-title">基本信息</div><dl class="kv">';
-    h += '<dt>供应商</dt><dd>' + esc(o.supplier) + '</dd>';
-    h += '<dt>产品类型</dt><dd>' + esc(o.ptype) + '</dd>';
-    h += '<dt>状态</dt><dd>' + esc(o.status) + ' · ' + esc(o.progress) + '</dd>';
-    h += '<dt>计划引进</dt><dd>' + fmt(o.planAdopt) + '</dd>';
-    h += '<dt>确认引进</dt><dd>' + fmt(o.adoptDate) + '</dd>';
+    h += '<dt>供应商</dt><dd>' + esc(o.supplier || '—') + '</dd>';
+    h += '<dt>产品类型</dt><dd>' + esc(o.ptype || '—') + '</dd>';
+    h += '<dt>状态</dt><dd>' + outStatusChip(statusText) + '</dd>';
+    h += '<dt>计划完成时间</dt><dd>' + fmt(o.planAdopt) + '</dd>';
+    h += '<dt>实际完成时间</dt><dd>' + fmt(o.actualDate || o.adoptDate) + '</dd>';
     h += '</dl></div>';
     h += '<div class="drawer-section"><div class="ds-title">样品与测试</div><div class="timeline">';
     h += '<div class="tl-item ' + (o.sample1Date ? '' : '') + '"><span class="tl-dot"></span><div class="tl-main"><b>第一次样品 · ' + esc(o.sample1 || '—') + '</b><span>接收 ' + fmt(o.sample1Date) + ' · 确认 ' + fmt(o.confirm1Date) + '</span>' + (o.result1 ? '<div class="task-meta" style="margin-top:4px;line-height:1.6">' + esc(o.result1) + '</div>' : '') + '</div></div>';
@@ -2833,12 +3230,239 @@
     openDrawer('OUTSOURCING DETAIL', h);
   }
 
+  function colorTypeOpts(selected) {
+    var arr = uniq(D.colors.map(function (c) { return c.ctype; }).filter(Boolean));
+    if (!arr.length) arr = ['新品配色', '标准品新增色', '配方更新', '重新配色'];
+    if (selected && arr.indexOf(selected) < 0) arr.push(selected);
+    return arr.map(function (t) { return '<option value="' + esc(t) + '"' + (selected === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('');
+  }
+  function colorDeptOpts(selected) {
+    var arr = uniq(D.colors.map(function (c) { return c.dept; }).filter(Boolean));
+    if (!arr.length) arr = ['产品部', '内贸', '外贸'];
+    if (selected && arr.indexOf(selected) < 0) arr.push(selected);
+    return arr.map(function (t) { return '<option value="' + esc(t) + '"' + (selected === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('');
+  }
+  function colorStatusOpts(selected) {
+    return COLOR_STATUSES.map(function (t) { return '<option value="' + esc(t) + '"' + (selected === t ? ' selected' : '') + '>' + esc(t) + '</option>'; }).join('');
+  }
+  function colorAddRowHtml() {
+    return '<div class="batch-row color-batch-row">' +
+      '<label>SPU *<input data-caf="spu" placeholder="如 PLA-Basic"></label>' +
+      '<label>颜色名 *<input data-caf="color" placeholder="如 深灰"></label>' +
+      '<label>颜色参考<input data-caf="ref" placeholder="如 拓竹深灰实物样品"></label>' +
+      '<label>项目类型<select data-caf="ctype">' + colorTypeOpts('') + '</select></label>' +
+      '<label>需求部门<select data-caf="dept">' + colorDeptOpts('') + '</select></label>' +
+      '<label>期望交付时间<input type="date" data-caf="due"></label>' +
+      '<button type="button" class="btn out-row-del" data-crowdel title="移除">×</button>' +
+      '</div>';
+  }
+  function openColorAdd() {
+    var h = '<form id="colorAddForm">';
+    h += '<div class="out-form-tip">可一次添加多个配色需求；保存后全部进入配色表格。</div>';
+    h += '<div id="colorAddRows" class="batch-rows">' + colorAddRowHtml() + '</div>';
+    h += '<div class="out-add-tools"><button type="button" id="colorAddLine" class="btn">+ 添加一行</button></div>';
+    h += '<div class="form-actions"><button type="button" class="btn imp-open-btn" data-color-imp><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3.5h4l1.4 1.6H14.5v8H1.5z"/></svg>批量导入</button><button type="button" class="btn" data-modal-close>取消</button><button type="submit" class="btn primary">保存</button></div>';
+    h += '</form>';
+    openModal('新增配色项目', h);
+    var modal = document.querySelector('.modal'); if (modal) modal.classList.add('wide');
+    var rows = $('#colorAddRows');
+    $('#colorAddLine').addEventListener('click', function () {
+      rows.insertAdjacentHTML('beforeend', colorAddRowHtml());
+    });
+    rows.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-crowdel]');
+      if (!b) return;
+      if (rows.children.length <= 1) { toast('至少保留一行'); return; }
+      b.closest('.batch-row').remove();
+    });
+    var imp = $('[data-color-imp]');
+    if (imp) imp.addEventListener('click', function () { openColorImportPicker(); });
+    $('#colorAddForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var items = [], bad = null;
+      $$('.batch-row', rows).forEach(function (row) {
+        var spu = row.querySelector('[data-caf="spu"]').value.trim();
+        var color = row.querySelector('[data-caf="color"]').value.trim();
+        if ((!spu || !color) && !bad) bad = !spu ? row.querySelector('[data-caf="spu"]') : row.querySelector('[data-caf="color"]');
+        items.push({
+          spu: spu, color: color,
+          ref: row.querySelector('[data-caf="ref"]').value.trim(),
+          ctype: row.querySelector('[data-caf="ctype"]').value,
+          dept: row.querySelector('[data-caf="dept"]').value,
+          due: row.querySelector('[data-caf="due"]').value || null
+        });
+      });
+      if (bad) { bad.focus(); toast('SPU 和颜色名为必填项'); return; }
+      items.forEach(function (d) {
+        var c = {
+          id: uid('c'), request: TODAY, status: '未启动', done: '未完成',
+          dept: d.dept, spu: d.spu, ctype: d.ctype, color: d.color, ref: d.ref,
+          due: d.due, trial: '', finish: null, note: ''
+        };
+        D.colors.push(c);
+        APP.colorAdded.push(cloneObj(c));
+      });
+      appSave();
+      closeModal();
+      render();
+      toast('已新增 ' + items.length + ' 个配色项目');
+    });
+  }
+  function openColorEdit(id) {
+    var c = D.colors.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    var st = colorStatus(c);
+    var h = '<form id="colorEditForm" class="form-grid">';
+    h += '<label>SPU *<input name="spu" required value="' + esc(c.spu || '') + '"></label>';
+    h += '<label>颜色名 *<input name="color" required value="' + esc(c.color || '') + '"></label>';
+    h += '<label class="full">颜色参考<input name="ref" value="' + esc(c.ref || '') + '"></label>';
+    h += '<label>项目类型<select name="ctype">' + colorTypeOpts(c.ctype) + '</select></label>';
+    h += '<label>需求部门<select name="dept">' + colorDeptOpts(c.dept) + '</select></label>';
+    h += '<label>状态<select name="status">' + colorStatusOpts(st) + '</select></label>';
+    h += '<label>期望交付时间<input type="date" name="due" value="' + esc(c.due || '') + '"></label>';
+    h += '<label>需求提交时间<input type="date" name="request" value="' + esc(c.request || '') + '"></label>';
+    h += '<label>试色方式<input name="trial" value="' + esc(c.trial || '') + '"></label>';
+    h += '<label>完成时间<input type="date" name="finish" value="' + esc(c.finish || '') + '"></label>';
+    h += '<label class="full">备注<input name="note" value="' + esc(c.note || '') + '"></label>';
+    h += '<div class="form-actions"><button type="button" class="btn" data-modal-close>取消</button><button type="submit" class="btn primary">保存</button></div>';
+    h += '</form>';
+    openModal('编辑配色需求', h);
+    $('#colorEditForm').addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var el = this.elements;
+      var spu = el['spu'].value.trim();
+      var color = el['color'].value.trim();
+      if (!spu) { toast('请输入 SPU'); el['spu'].focus(); return; }
+      if (!color) { toast('请输入颜色名'); el['color'].focus(); return; }
+      var patch = {
+        spu: spu, color: color, ref: el['ref'].value.trim(),
+        ctype: el['ctype'].value, dept: el['dept'].value,
+        status: el['status'].value, due: el['due'].value || null,
+        request: el['request'].value || null, trial: el['trial'].value.trim(),
+        finish: el['finish'].value || null, note: el['note'].value.trim()
+      };
+      Object.assign(c, patch);
+      APP.colorPatches[id] = Object.assign({}, APP.colorPatches[id] || {}, patch);
+      appSave();
+      closeModal();
+      render();
+      openColor(id);
+      toast('已保存配色需求');
+    });
+  }
+  function deleteColor(id) {
+    var c = D.colors.filter(function (x) { return x.id === id; })[0];
+    if (!c) return;
+    if (!confirm('确定将“' + c.spu + ' · ' + c.color + '”移入回收站？')) return;
+    APP.recycle.push({ kind: 'color', color: cloneObj(c) });
+    D.colors = D.colors.filter(function (x) { return x.id !== id; });
+    appSave();
+    render();
+    toast('已移入回收站');
+  }
+  function openColorImportPicker() {
+    var inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.csv,.txt,.xls,.xlsx,.xlsm';
+    inp.style.display = 'none'; inp.id = 'colorImportFileInput';
+    document.body.appendChild(inp);
+    inp.addEventListener('change', function () {
+      var f = inp.files && inp.files[0];
+      if (f) handleImportFile(f, openColorImportPreview);
+      setTimeout(function () { if (inp.parentNode) inp.parentNode.removeChild(inp); }, 2000);
+    });
+    inp.click();
+  }
+  function openColorImportPreview(rows) {
+    var headerRow = -1;
+    for (var hi = 0; hi < Math.min(rows.length, 8); hi++) {
+      var joined = rows[hi].map(function (c) { return String(c || '').replace(/\s+/g, ''); });
+      if (joined.some(function (c) { return /spu|颜色名|颜色参考/i.test(c); })) { headerRow = hi; break; }
+    }
+    var headers = headerRow >= 0 ? rows[headerRow].map(function (h) { return String(h).replace(/\s+/g, ''); }) : [];
+    function findIdx(test) { for (var i = 0; i < headers.length; i++) { if (test(headers[i])) return i; } return -1; }
+    var idx = {
+      spu: findIdx(function (h) { return /spu/i.test(h); }),
+      color: findIdx(function (h) { return h.indexOf('颜色名') >= 0 || h === '颜色'; }),
+      ref: findIdx(function (h) { return h.indexOf('颜色参考') >= 0 || h === '参考'; }),
+      ctype: findIdx(function (h) { return h.indexOf('项目类型') >= 0 || h === '类型'; }),
+      dept: findIdx(function (h) { return h.indexOf('需求部门') >= 0 || h === '部门'; }),
+      due: findIdx(function (h) { return h.indexOf('期望交付') >= 0 || h.indexOf('交付') >= 0; }),
+      status: findIdx(function (h) { return h.indexOf('状态') >= 0; }),
+      note: findIdx(function (h) { return h.indexOf('备注') >= 0; })
+    };
+    if (headerRow < 0) {
+      idx = { spu: 0, color: 1, ref: 2, ctype: 3, dept: 4, due: 5, status: 6, note: 7 };
+    }
+    var dataRows = headerRow >= 0 ? rows.slice(headerRow + 1) : rows.slice();
+    var items = dataRows.map(function (r) {
+      var get = function (k) { var ix = idx[k]; return ix >= 0 ? String(r[ix] == null ? '' : r[ix]).trim() : ''; };
+      var status = get('status');
+      if (COLOR_STATUSES.indexOf(status) < 0) status = '未启动';
+      return { spu: get('spu'), color: get('color'), ref: get('ref'), ctype: get('ctype'), dept: get('dept'), due: normImportDate(get('due')), status: status, note: get('note') };
+    }).filter(function (x) { return x.spu || x.color; });
+    if (!items.length) { toast('未识别到 SPU 或颜色名，请确认文件表头'); return; }
+    var statusOpts = COLOR_STATUSES.map(function (o) { return '<option value="' + o + '">' + o + '</option>'; }).join('');
+    var h = '<div class="imp-bar"><span>共识别 <b>' + items.length + '</b> 条配色需求，请确认后保存导入。</span><button type="button" class="btn" data-color-template>下载 CSV 模板</button></div>';
+    h += '<div class="imp-wrap"><table class="tbl imp-tbl color-imp-tbl"><thead><tr><th>导入</th><th>SPU</th><th>颜色名</th><th>颜色参考</th><th>项目类型</th><th>需求部门</th><th>期望交付</th><th>状态</th><th>备注</th></tr></thead><tbody>';
+    items.forEach(function (it) {
+      h += '<tr>';
+      h += '<td><input type="checkbox" class="color-imp-sel" checked></td>';
+      h += '<td><input class="imp-inp" data-cfield="spu" value="' + esc(it.spu) + '"></td>';
+      h += '<td><input class="imp-inp" data-cfield="color" value="' + esc(it.color) + '"></td>';
+      h += '<td><input class="imp-inp" data-cfield="ref" value="' + esc(it.ref) + '"></td>';
+      h += '<td><input class="imp-inp" data-cfield="ctype" value="' + esc(it.ctype) + '"></td>';
+      h += '<td><input class="imp-inp" data-cfield="dept" value="' + esc(it.dept) + '"></td>';
+      h += '<td><input class="imp-inp" type="date" data-cfield="due" value="' + esc(it.due) + '"></td>';
+      h += '<td><select class="imp-inp" data-cfield="status">' + statusOpts.replace('value="' + it.status + '"', 'value="' + it.status + '" selected') + '</select></td>';
+      h += '<td><input class="imp-inp" data-cfield="note" value="' + esc(it.note) + '"></td>';
+      h += '</tr>';
+    });
+    h += '</tbody></table></div>';
+    h += '<div class="form-actions" style="margin-top:12px"><button type="button" class="btn" data-modal-close>取消</button><button type="button" class="btn primary" data-color-imp-save>保存导入</button></div>';
+    openModal('批量导入配色需求', h);
+    var modal = document.querySelector('.modal'); if (modal) modal.classList.add('wide');
+    $$('#modalBody [data-color-template]').forEach(function (b) { b.addEventListener('click', downloadColorTemplate); });
+    $$('#modalBody [data-color-imp-save]').forEach(function (b) { b.addEventListener('click', saveColorImported); });
+  }
+  function downloadColorTemplate() {
+    var csv = '\uFEFFSPU,颜色名,颜色参考,项目类型,需求部门,期望交付时间,状态,备注\nPLA-Basic,深灰,拓竹深灰实物样品,标准品新增色,产品部,2027-03-31,未启动,示例\n';
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = '批量导入配色模板.csv'; a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+  }
+  function saveColorImported() {
+    var added = 0, skipped = 0;
+    $$('#modalBody .color-imp-tbl tbody tr').forEach(function (tr) {
+      var chk = tr.querySelector('.color-imp-sel');
+      if (chk && !chk.checked) return;
+      var fv = function (f) { var el = tr.querySelector('[data-cfield="' + f + '"]'); return el ? el.value.trim() : ''; };
+      var spu = fv('spu'), color = fv('color');
+      if (!spu || !color) { skipped++; return; }
+      if (D.colors.some(function (x) { return x.spu === spu && x.color === color; })) { skipped++; return; }
+      var status = fv('status');
+      if (COLOR_STATUSES.indexOf(status) < 0) status = '未启动';
+      var c = {
+        id: uid('c'), request: TODAY, status: status, done: '未完成',
+        dept: fv('dept') || '产品部', spu: spu, ctype: fv('ctype') || '标准品新增色',
+        color: color, ref: fv('ref'), due: fv('due') || null, trial: '', finish: null, note: fv('note')
+      };
+      D.colors.push(c);
+      APP.colorAdded.push(cloneObj(c));
+      added++;
+    });
+    if (!added) { toast('没有可导入的配色需求' + (skipped ? '（' + skipped + ' 条重复或缺少 SPU/颜色名）' : '')); return; }
+    appSave();
+    closeModal();
+    render();
+    toast('已导入 ' + added + ' 条配色需求' + (skipped ? '，跳过 ' + skipped + ' 条' : ''));
+  }
   function openColor(id) {
     var c = D.colors.filter(function (x) { return x.id === id; })[0];
     if (!c) return;
-    var s = poolState({ status: c.status, done: c.done, plan: c.due });
+    var s = colorStatus(c);
     var cyc = c.request && c.finish ? diffDays(c.request, c.finish) : null;
-    var h = '<h3><span class="swatch" style="width:22px;height:22px;vertical-align:-3px;' + colorStyle(c.color) + '"></span> ' + esc(c.spu) + ' · ' + esc(c.color) + '</h3><div class="drawer-tags">' + chip(s) + tag(c.ctype, 'plain') + tag(c.dept, 'gray') + '</div>';
+    var h = '<h3><span class="swatch" style="width:22px;height:22px;vertical-align:-3px;' + colorStyle(c.color) + '"></span> ' + esc(c.spu) + ' · ' + esc(c.color) + '</h3><div class="drawer-tags">' + colorStatusChip(s) + tag(c.ctype, 'plain') + tag(c.dept, 'gray') + '</div>';
     h += '<div class="drawer-section"><div class="ds-title">需求信息</div><dl class="kv">';
     h += '<dt>需求提交</dt><dd>' + fmt(c.request) + '</dd>';
     h += '<dt>期望交付</dt><dd>' + fmt(c.due) + '</dd>';
@@ -2951,6 +3575,79 @@
       var oq = $('#out-q');
       bindTextSearch(oq, state.out, 'q', 'out-q');
       var ot = $('#out-type'); if (ot) ot.addEventListener('change', function () { state.out.type = this.value; render(); });
+      var outDragId = null, outDragAt = 0;
+      $$('.out-ball').forEach(function (b) {
+        b.addEventListener('dragstart', function (ev) {
+          outDragId = this.getAttribute('data-outid');
+          outDragAt = Date.now();
+          this.classList.add('dragging');
+          try { ev.dataTransfer.setData('text/plain', outDragId); ev.dataTransfer.effectAllowed = 'move'; } catch (e) {}
+        });
+        b.addEventListener('dragend', function () {
+          this.classList.remove('dragging');
+          outDragAt = Date.now();
+        });
+        b.addEventListener('click', function (ev) {
+          if (Date.now() - outDragAt < 350) { ev.preventDefault(); ev.stopPropagation(); }
+        });
+      });
+      $$('.out-container').forEach(function (zone) {
+        zone.addEventListener('dragover', function (ev) {
+          if (!outDragId) return;
+          ev.preventDefault();
+          try { ev.dataTransfer.dropEffect = 'move'; } catch (e) {}
+          zone.classList.add('drop-hover');
+        });
+        zone.addEventListener('dragleave', function () { zone.classList.remove('drop-hover'); });
+        zone.addEventListener('drop', function (ev) {
+          ev.preventDefault();
+          zone.classList.remove('drop-hover');
+          var id = outDragId || (ev.dataTransfer && ev.dataTransfer.getData('text/plain'));
+          var prog = zone.getAttribute('data-outstage');
+          var o = D.outsourcing.filter(function (x) { return x.id === id; })[0];
+          if (!o || !prog) return;
+          var targetBall = ev.target.closest ? ev.target.closest('.out-ball') : null;
+          if (targetBall && targetBall.getAttribute('data-outid') === id) return;
+          var domBalls = $$('.out-ball', zone).filter(function (b) { return b.getAttribute('data-outid') !== id; });
+          if (!targetBall && domBalls.length) {
+            var best = null, bestD = Infinity;
+            domBalls.forEach(function (b) {
+              var br = b.getBoundingClientRect();
+              var dx = ev.clientX - (br.left + br.width / 2), dy = ev.clientY - (br.top + br.height / 2);
+              var d = dx * dx + dy * dy;
+              if (d < bestD) { bestD = d; best = b; }
+            });
+            targetBall = best;
+          }
+          var insertAt = domBalls.length;
+          if (targetBall && zone.contains(targetBall)) {
+            var ti = domBalls.indexOf(targetBall);
+            var tr = targetBall.getBoundingClientRect();
+            var after = ev.clientY > tr.top + tr.height / 2 || (ev.clientY >= tr.top && ev.clientY <= tr.bottom && ev.clientX > tr.left + tr.width / 2);
+            insertAt = (ti < 0 ? domBalls.length : ti) + (after ? 1 : 0);
+          }
+          var newOrder = domBalls.map(function (b) { return b.getAttribute('data-outid'); });
+          newOrder.splice(insertAt, 0, id);
+          APP.outOrder = APP.outOrder || {};
+          Object.keys(APP.outOrder).forEach(function (k) {
+            APP.outOrder[k] = (APP.outOrder[k] || []).filter(function (x) { return x !== id; });
+          });
+          APP.outOrder[prog] = newOrder;
+          if (o.progress === prog) { appSave(); render(); return; }
+          o.progress = prog;
+          o.adopted = prog === '完成引进';
+          if (prog === '完成引进' && !o.actualDate) o.actualDate = iso(new Date());
+          if (prog === '完成引进') { o.status = '正常'; o.statusManual = true; }
+          if (prog !== '不引进' && (o.status === '取消' || (o.status === '待启动' && prog !== '寻源中'))) { o.status = '正常'; o.statusManual = true; }
+          APP.outsourceMoves = APP.outsourceMoves || {};
+          APP.outsourceMoves[id] = prog;
+          APP.outsourcePatches = APP.outsourcePatches || {};
+          APP.outsourcePatches[id] = Object.assign({}, APP.outsourcePatches[id] || {}, { progress: prog, adopted: o.adopted, actualDate: o.actualDate || '', status: o.status, statusManual: !!o.statusManual });
+          appSave();
+          render();
+          toast('已移动到「' + ((OUT_STAGES[outStageIndex(prog)] || {}).label || prog) + '」');
+        });
+      });
     }
     if (id === 'color') {
       var cq = $('#color-q');
@@ -2984,6 +3681,25 @@
       });
       $$('[data-wbsmonth]').forEach(function (b) {
         b.addEventListener('click', function () { state.wbs.month = this.getAttribute('data-wbsmonth'); render(); });
+      });
+      $$('[data-wbsdel]').forEach(function (b) {
+        b.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          var name = this.getAttribute('data-wbsdel');
+          if (!confirm('确定删除“' + name + '”的 WBS 任务清单？')) return;
+          var w = findWbsAny(name);
+          var target = w ? w.name : name;
+          APP.wbsDeleted = APP.wbsDeleted || [];
+          if (APP.wbsDeleted.indexOf(target) < 0) APP.wbsDeleted.push(target);
+          D.wbs = D.wbs.filter(function (x) { return x.name !== target; });
+          delete WBS_BY_NORM[normalize(target)];
+          delete APP.wbsOverride[target];
+          delete APP.wbsHidden[target];
+          appSave();
+          if (!D.wbs.some(function (x) { return x.name === state.wbs.proj; })) state.wbs.proj = D.wbs[0] ? D.wbs[0].name : '';
+          render();
+          toast('已删除 WBS 任务清单');
+        });
       });
       $$('[data-wbsonly]').forEach(function (b) {
         b.addEventListener('click', function () { state.wbs.only = this.getAttribute('data-wbsonly'); render(); });
@@ -3074,6 +3790,11 @@
         else if (act === 'open-map') { openMap(t.getAttribute('data-type'), t.getAttribute('data-text')); }
         else if (act === 'open-out') { openOut(id); }
         else if (act === 'open-color') { openColor(id); }
+        else if (act === 'out-add') { openOutAdd(); }
+        else if (act === 'out-edit') { closeDrawer(); openOutEdit(id); }
+        else if (act === 'color-add') { openColorAdd(); }
+        else if (act === 'color-edit') { closeDrawer(); openColorEdit(id); }
+        else if (act === 'color-del') { deleteColor(id); }
         else if (act === 'goto-wbs') {
           state.wbs.proj = id; state.wbs.mode = 'list';
           closeDrawer();
@@ -3090,6 +3811,7 @@
           if (sc === 'key') state.key = { q: '', type: '', pri: '', only: '', done: '', month: '', sort: 'risk' };
           else if (sc === 'map') state.map = { type: '', q: '', status: '', pri: '', done: '' };
           else if (sc === 'pool') state.pool = { q: '', type: '', status: '', priority: '', done: '', key: '', sort: 'risk' };
+          else if (sc === 'color') state.color = { q: '', spu: '', status: '', dept: '' };
           render();
         }
         else if (act === 'goto-key') {
@@ -3099,7 +3821,7 @@
           state.key.month = mv === 'current' ? currentMonthKey() : mv;
           if (location.hash === '#/key') render(); else location.hash = '#/key';
         }
-        else if (act === 'add-pool') { openProjectForm('pool-add'); }
+        else if (act === 'add-pool') { openPoolAdd(); }
         else if (act === 'import-pool') { openImportPicker(); }
         else if (act === 'edit-pool') { openProjectForm('pool-edit', id); }
         else if (act === 'del-pool') { deletePoolProject(id); }
