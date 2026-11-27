@@ -277,7 +277,7 @@
       } catch (e) {}
     }, 250);
   }
-  var onlineSaveTimer = null, onlineLastSave = 0, onlineRoNotified = false;
+  var onlineSaveTimer = null, onlineLastSave = 0, onlineRoNotified = false, onlineCheckBusy = false, onlineReloading = false;
   function scheduleOnlineSave() {
     if (!onlineEnabled) return;
     if (onlineReadOnly) {
@@ -293,7 +293,15 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-Edit-Token': ONLINE_TOKEN },
           body: JSON.stringify({ app: APP, ov: OV, ts: lastSaveTs })
-        }).then(function (r) { if (!r.ok) toast('在线保存失败，请检查编辑权限'); }).catch(function () {});
+        }).then(function (r) {
+          if (!r.ok) { toast('在线保存失败，请检查编辑权限'); return null; }
+          return r.json();
+        }).then(function (res) {
+          if (res && res.ts) {
+            lastSaveTs = Number(res.ts) || lastSaveTs;
+            try { localStorage.setItem(TS_KEY, String(lastSaveTs)); } catch (e) {}
+          }
+        }).catch(function () {});
       } catch (e) {}
     }, 300);
   }
@@ -304,19 +312,34 @@
       localStorage.setItem(TS_KEY, String(Number(s.ts || 0)));
     } catch (e) {}
   }
+  function applyOnlineState(s) {
+    if (!s) return false;
+    if (s.required && !ONLINE_TOKEN) onlineReadOnly = true;
+    var sts = Number(s.ts || 0);
+    if (sts > lastSaveTs && !onlineReloading) {
+      onlineReloading = true;
+      storeOnlineState(s);
+      location.reload();
+      return true;
+    }
+    return false;
+  }
+  function checkOnlineState() {
+    if (!onlineEnabled || onlineCheckBusy || onlineReloading) return;
+    if (onlineSaveTimer || Date.now() - onlineLastSave < 1200) return;
+    onlineCheckBusy = true;
+    fetch('api/state?t=' + Date.now(), { cache: 'no-store' }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (s) {
+      onlineCheckBusy = false;
+      applyOnlineState(s);
+    }).catch(function () { onlineCheckBusy = false; });
+  }
   function startOnlinePolling() {
     if (!onlineMode || onlinePollTimer) return;
-    onlinePollTimer = setInterval(function () {
-      fetch('api/state?t=' + Date.now(), { cache: 'no-store' }).then(function (r) { return r.ok ? r.json() : null; }).then(function (s) {
-        if (!s) return;
-        if (s.required && !ONLINE_TOKEN) onlineReadOnly = true;
-        var sts = Number(s.ts || 0);
-        if (sts > 0 && sts !== lastSaveTs) {
-          storeOnlineState(s);
-          location.reload();
-        }
-      }).catch(function () {});
-    }, 3000);
+    onlinePollTimer = setInterval(checkOnlineState, 2500);
+    window.addEventListener('focus', checkOnlineState);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) checkOnlineState(); });
     window.addEventListener('storage', function (ev) {
       if (ev.key === APP_KEY || ev.key === OV_KEY) location.reload();
     });
@@ -334,7 +357,7 @@
         onlineReadOnly = false;
       }
       var sts = Number(s.ts || 0);
-      if (sts > 0 && sts !== lastSaveTs) {
+      if (sts > lastSaveTs) {
         storeOnlineState(s);
         location.reload();
         return;

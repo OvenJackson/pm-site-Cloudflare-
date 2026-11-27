@@ -26,7 +26,16 @@ export async function onRequestPost({ request, env }) {
   try {
     const d = await request.json();
     if (!d || !d.app || !d.ov) return json({ ok: false, error: 'bad payload' }, 400);
-    const payload = { app: d.app, ov: d.ov, ts: Number(d.ts || 0) || Date.now() };
+    let oldTs = 0;
+    try {
+      const raw = await env.PM_KV.get('state');
+      if (raw) {
+        const old = JSON.parse(raw);
+        oldTs = Number(old && old.ts) || 0;
+      }
+    } catch (e) {}
+    const ts = Math.max(Date.now(), oldTs + 1);
+    const payload = { app: d.app, ov: d.ov, ts: ts };
     await env.PM_KV.put('state', JSON.stringify(payload));
     return json({ ok: true, ts: payload.ts });
   } catch (e) {
